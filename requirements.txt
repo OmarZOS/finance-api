@@ -2,7 +2,10 @@ fastapi
 uvicorn
 pillow
 python-multipart
-pytest
+pydantic-settings
+
+mysql-connector-python
+sqlalchemy
 
 # prometheus_client
 prometheus-fastapi-instrumentator

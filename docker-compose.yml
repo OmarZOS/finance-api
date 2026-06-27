@@ -4,29 +4,32 @@
 
 services:
 
-  emagrad-fs:
-    container_name: emagrad-fs
-    hostname: emagrad-fs
+  finance-api:
+    container_name: finance-api
+    hostname: finance-api
     restart: unless-stopped
     build:
       context: ./
-      # dockerfile: ./Dockerfile.dev
-      dockerfile: ./Dockerfile
+      dockerfile: ./Dockerfile.dev
+      # dockerfile: ./Dockerfile
       args:
-        - FS_PORT=9099
-    # command: uvicorn server:app --host 0.0.0.0 --port 9099 --reload
-    image: omarzos/emagrad-fs
+        - FINANCE_PORT=9098
+    command: uvicorn server:app --host 0.0.0.0 --port 9098 --reload
+    image: omarzos/finance-api
     ports:
-      - 9099:9099
+      - 9098:9098
     environment:
-      - FS_PORT=9099
-      - FS_BASE_STORAGE=${FS_BASE_STORAGE}
-      - FS_CACHE_STORAGE=${FS_CACHE_STORAGE}
+      - FINANCE_PORT=9098
+      - SQL_SCHEMA=${SQL_SCHEMA}
+      - SQL_HOST=${SQL_HOST}
+      - SQL_USER=${SQL_USER}
+      - SQL_PASSWORD=${SQL_PASSWORD}
+      - SQL_DATABASE=${SQL_DATABASE}
+      - SQL_PORT=${SQL_PORT}
     # networks:
     #   - gluttex-net
     volumes:
       - ./:/code
-      - ./volumes/fs/:/fs/
     deploy:
       resources:
         limits:
