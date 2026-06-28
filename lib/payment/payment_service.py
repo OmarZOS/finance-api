@@ -1,6 +1,7 @@
 
 # services/payment_service.py
 
+import decimal
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
@@ -140,23 +141,23 @@ class PaymentService:
                 )
             
             # Get user from invoice
-            user_id = None
-            if invoice.cart:
-                user_id = invoice.cart.cart_client_user
-            elif invoice.placed_order:
-                user_id = invoice.placed_order.ordering_user_id
-            
-            if not user_id:
-                raise APIException(
-                    status_code=400,
-                    error_code="USER_NOT_FOUND",
-                    message="Could not determine user from invoice"
-                )
             
             # Process payment based on method
             transactions = []
             
-            if payment.payment_method in ['wallet', 'deposit']:
+            if payment.payment_method in ['wallet']:
+                user_id = None
+                if invoice.cart:
+                    user_id = invoice.cart.cart_client_user
+                elif invoice.placed_order:
+                    user_id = invoice.placed_order.ordering_user_id
+                
+                if not user_id:
+                    raise APIException(
+                        status_code=400,
+                        error_code="USER_NOT_FOUND",
+                        message="Could not determine user from invoice"
+                    )
                 # Wallet payment - transfer from user's wallet
                 wallet = self.wallet_repo.get_wallet_by_user(user_id)
                 if not wallet:
@@ -199,7 +200,7 @@ class PaymentService:
                     'status': 'completed'
                 })
             
-            elif payment.payment_method in ['cash', 'card', 'bank_transfer', 'mobile_money']:
+            elif payment.payment_method in ['cash','deposit' , 'card', 'bank_transfer', 'mobile_money']:
                 # External payment - create transaction from system to provider
                 # Get provider wallet
                 provider_id = None
@@ -261,7 +262,7 @@ class PaymentService:
             
             # Update invoice status
             payment_summary = self.invoice_repo.get_invoice_totals(payment.payment_invoice_id)
-            total_paid = payment_summary.get('total_paid', 0) + payment.payment_amount
+            total_paid = decimal.Decimal(payment_summary.get('total_paid', 0)) + payment.payment_amount
             
             if total_paid >= invoice.invoice_total_amount:
                 invoice_status = 'paid'
@@ -314,10 +315,17 @@ class PaymentService:
                 payment_id, 'failed',
                 reference=f"REJ-{uuid.uuid4().hex[:8].upper()}"
             )
+            # Get the full payment details
+            payment = self.payment_repo.get_payment_by_id(payment_id)
+            invoice = self.invoice_repo.get_invoice_by_id(payment.payment_invoice_id)
             
             return {
                 'payment_id': payment_id,
+                'invoice_id': payment.payment_invoice_id,  # Add this
+                'amount': float(payment.payment_amount) if payment.payment_amount else 0,  # Add this
+                'payment_method': payment.payment_method,  # Add this
                 'status': 'failed',
+                'reference': payment.payment_reference,  # Add this
                 'reason': reason,
                 'rejected_at': datetime.now().isoformat()
             }

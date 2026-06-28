@@ -28,7 +28,7 @@ def get_db() -> Session:
         yield session
 
 
-@router.post("/payment", response_model=PaymentResponse)
+@router.post("/payment")
 async def create_payment(
     payment_data: PaymentCreate,
     db: Session = Depends(get_db)
@@ -55,7 +55,7 @@ async def create_payment(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/confirm/{payment_id}", response_model=PaymentResponse)
+@router.post("/confirm/{payment_id}")
 async def confirm_payment(
     payment_id: int,
     confirm_data: PaymentConfirm = Body(...),
@@ -79,7 +79,7 @@ async def confirm_payment(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/reject/{payment_id}", response_model=PaymentResponse)
+@router.post("/reject/{payment_id}")
 async def reject_payment(
     payment_id: int,
     reason: str = Body(..., embed=True),
@@ -100,7 +100,7 @@ async def reject_payment(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/invoice/{invoice_id}", response_model=InvoicePaymentResponse)
+@router.get("/invoice/{invoice_id}")
 async def get_invoice_payments(
     invoice_id: int,
     db: Session = Depends(get_db)
@@ -116,7 +116,7 @@ async def get_invoice_payments(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/refund/{payment_id}", response_model=PaymentResponse)
+@router.post("/refund/{payment_id}")
 async def refund_payment(
     payment_id: int,
     refund_data: PaymentRefund,
@@ -159,7 +159,7 @@ async def get_daily_payment_stats(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/{payment_id}", response_model=PaymentResponse)
+@router.get("/{payment_id}")
 async def get_payment(
     payment_id: int,
     db: Session = Depends(get_db)
