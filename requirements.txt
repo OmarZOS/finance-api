@@ -4,6 +4,7 @@ pillow
 python-multipart
 pydantic-settings
 
+pymysql
 mysql-connector-python
 sqlalchemy
 

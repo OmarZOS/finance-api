@@ -53,7 +53,7 @@ class PaymentResponse(BaseModel):
     payment_id: int
     invoice_id: int
     amount: float
-    payment_method: str
+    payment_method: Optional[str] = None
     status: str
     reference: str
     type: Optional[str] = None

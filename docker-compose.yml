@@ -26,8 +26,8 @@ services:
       - SQL_PASSWORD=${SQL_PASSWORD}
       - SQL_DATABASE=${SQL_DATABASE}
       - SQL_PORT=${SQL_PORT}
-    # networks:
-    #   - gluttex-net
+    networks:
+      - gluttex-net
     volumes:
       - ./:/code
     deploy:
@@ -42,7 +42,8 @@ volumes:
     driver: local
 
 
-# networks:
-#   gluttex-net:
+networks:
+  gluttex-net:
+    external: true
 #     name: gluttex-net
 #     driver: bridge

@@ -10,7 +10,10 @@ from core.messages import *
 import logging
 import uuid
 
-from lib.payment.payment_repo import InvoiceRepository, MoneyTransactionRepository, PaymentRepository, WalletRepository
+from lib.invoice.invoice_repository import InvoiceRepository
+from lib.payment.payment_repo import  PaymentRepository
+from lib.wallet.money_transaction_repository import MoneyTransactionRepository
+from lib.wallet.wallet_repository import WalletRepository
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +347,7 @@ class PaymentService:
                 'payment_id': payment.payment_id,
                 'invoice_id': payment.payment_invoice_id,
                 'amount': float(payment.payment_amount) if payment.payment_amount else 0,
-                'method': payment.payment_method,
+                'payment_method': payment.payment_method,
                 'status': payment.payment_status,
                 'reference': payment.payment_reference,
                 'type': payment.payment_type,
