@@ -10,8 +10,8 @@ services:
     restart: unless-stopped
     build:
       context: ./
-      dockerfile: ./Dockerfile.dev
-      # dockerfile: ./Dockerfile
+      # dockerfile: ./Dockerfile.dev
+      dockerfile: ./Dockerfile
       args:
         - FINANCE_PORT=9098
     command: uvicorn server:app --host 0.0.0.0 --port 9098 --reload
@@ -26,8 +26,8 @@ services:
       - SQL_PASSWORD=${SQL_PASSWORD}
       - SQL_DATABASE=${SQL_DATABASE}
       - SQL_PORT=${SQL_PORT}
-    networks:
-      - gluttex-net
+    # networks:
+    #   - gluttex-net
     volumes:
       - ./:/code
     deploy:
@@ -42,8 +42,8 @@ volumes:
     driver: local
 
 
-networks:
-  gluttex-net:
-    external: true
+# networks:
+#   gluttex-net:
+#     external: true
 #     name: gluttex-net
 #     driver: bridge

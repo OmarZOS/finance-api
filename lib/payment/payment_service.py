@@ -140,8 +140,8 @@ class PaymentService:
             user_id = None
             if invoice.cart:
                 user_id = invoice.cart.cart_client_user
-            if not user_id and invoice.placed_order:
-                user_id = invoice.placed_order.ordering_user_id
+            if not user_id and len(invoice.placed_order)>0:
+                user_id = invoice.placed_order[0].ordering_user_id
             
             # Process payment based on method
             transactions = []
@@ -329,8 +329,8 @@ class PaymentService:
             user_id = None
             if invoice and invoice.cart:
                 user_id = invoice.cart.cart_client_user
-            if not user_id and invoice and invoice.placed_order:
-                user_id = invoice.placed_order.ordering_user_id
+            if not user_id and invoice and len(invoice.placed_order)>0:
+                user_id = invoice.placed_order[0].ordering_user_id
             
             # Get transactions for this payment
             transactions = self.transaction_repo.get_transactions_by_payment(payment_id)
@@ -385,8 +385,8 @@ class PaymentService:
             user_id = None
             if invoice.cart:
                 user_id = invoice.cart.cart_client_user
-            if not user_id and invoice.placed_order:
-                user_id = invoice.placed_order.ordering_user_id
+            if not user_id and len(invoice.placed_order)>0:
+                user_id = invoice.placed_order[0].ordering_user_id
             
             return {
                 'invoice_id': invoice_id,
@@ -461,8 +461,8 @@ class PaymentService:
             user_id = None
             if invoice and invoice.cart:
                 user_id = invoice.cart.cart_client_user
-            if not user_id and invoice and invoice.placed_order:
-                user_id = invoice.placed_order.ordering_user_id
+            if not user_id and invoice and len(invoice.placed_order)>0:
+                user_id = invoice.placed_order[0].ordering_user_id
             
             # Process refund
             transactions = []
