@@ -200,8 +200,8 @@ class PaymentService:
             elif payment.payment_method in ['cash', 'card', 'bank_transfer', 'mobile_money']:
                 # Get provider wallet
                 provider_id = None
-                if invoice.cart:
-                    provider_id = invoice.cart.cart_product_provider_id
+                if len(invoice.cart)>0:
+                    provider_id = invoice.cart[0].cart_product_provider_id
                 
                 # Create transaction: System -> Provider
                 transaction_data = {
