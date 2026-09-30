@@ -139,7 +139,7 @@ class PaymentService:
             # Get user from invoice (Payment model doesn't have user_id)
             user_id = None
             if invoice.cart:
-                user_id = invoice.cart.cart_client_user
+                user_id = invoice.cart[0].cart_client_user
             if not user_id and len(invoice.placed_order)>0:
                 user_id = invoice.placed_order[0].ordering_user_id
             
@@ -282,8 +282,8 @@ class PaymentService:
             # Get user from invoice
             invoice = self.invoice_repo.get_invoice_by_id(payment.payment_invoice_id)
             user_id = None
-            if invoice and invoice.cart:
-                user_id = invoice.cart.cart_client_user
+            if invoice and len(invoice.cart)>0:
+                user_id = invoice.cart[0].cart_client_user
             
             # Update payment status to failed
             self.payment_repo.update_payment_status(
@@ -327,8 +327,8 @@ class PaymentService:
             # Get user from invoice
             invoice = self.invoice_repo.get_invoice_by_id(payment.payment_invoice_id)
             user_id = None
-            if invoice and invoice.cart:
-                user_id = invoice.cart.cart_client_user
+            if invoice and len(invoice.cart)>0:
+                user_id = invoice.cart[0].cart_client_user
             if not user_id and invoice and len(invoice.placed_order)>0:
                 user_id = invoice.placed_order[0].ordering_user_id
             
@@ -384,7 +384,7 @@ class PaymentService:
             # Get user_id from invoice for each payment
             user_id = None
             if invoice.cart:
-                user_id = invoice.cart.cart_client_user
+                user_id = invoice.cart[0].cart_client_user
             if not user_id and len(invoice.placed_order)>0:
                 user_id = invoice.placed_order[0].ordering_user_id
             
@@ -459,8 +459,8 @@ class PaymentService:
             # Get user from invoice
             invoice = self.invoice_repo.get_invoice_by_id(payment.payment_invoice_id)
             user_id = None
-            if invoice and invoice.cart:
-                user_id = invoice.cart.cart_client_user
+            if invoice and len(invoice.cart)>0:
+                user_id = invoice.cart[0].cart_client_user
             if not user_id and invoice and len(invoice.placed_order)>0:
                 user_id = invoice.placed_order[0].ordering_user_id
             
