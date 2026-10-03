@@ -107,6 +107,7 @@ class PaymentService:
     def confirm_payment(
         self, 
         payment_id: int,
+        
         transaction_details: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Confirm a pending payment and process transactions."""
@@ -137,11 +138,14 @@ class PaymentService:
                 )
             
             # Get user from invoice (Payment model doesn't have user_id)
-            user_id = None
-            if invoice.cart:
-                user_id = invoice.cart[0].cart_client_user
-            if not user_id and len(invoice.placed_order)>0:
-                user_id = invoice.placed_order[0].ordering_user_id
+            if transaction_details:
+                user_id = transaction_details.get('user_id')
+            
+            if not user_id : 
+                if invoice.cart:
+                    user_id = invoice.cart[0].cart_client_user
+                if not user_id and len(invoice.placed_order)>0:
+                    user_id = invoice.placed_order[0].ordering_user_id
             
             # Process payment based on method
             transactions = []
