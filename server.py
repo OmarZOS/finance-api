@@ -13,6 +13,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from lib.payment.payment_router import router as payment_router 
 
 from core.schemas.payment_schemas import API_Resolution
+from lib.wallet.wallet_router import wallet_router
 
 app = FastAPI(
     title="Finance API",
@@ -68,3 +69,4 @@ app.add_middleware(
 )
 
 app.include_router(payment_router, prefix="/payments", tags=["Payment routes"])
+app.include_router(wallet_router, prefix="/wallets", tags=["Wallet routes"])

@@ -1,5 +1,6 @@
 # repositories/payment_repository.py
 
+from decimal import Decimal
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -43,33 +44,38 @@ class WalletRepository:
             logger.error(f"Failed to get wallet for user {user_id}: {e}")
             return None
     
-    def update_wallet_balance(self, wallet_id: int, amount: float, 
-                             operation: str = 'add') -> Optional[Wallet]:
-        """Update wallet balance (add or subtract)"""
-        try:
-            wallet = self.session.query(Wallet).filter(
-                Wallet.id_wallet == wallet_id
-            ).first()
-            
-            if not wallet:
-                return None
-            
-            current_balance = wallet.wallet_balance or 0.0
-            if operation == 'add':
-                wallet.wallet_balance = current_balance + amount
-            elif operation == 'subtract':
-                if current_balance < amount:
-                    raise ValueError("Insufficient balance")
-                wallet.wallet_balance = current_balance - amount
-            else:
-                raise ValueError(f"Invalid operation: {operation}")
-            
-            self.session.flush()
-            return wallet
-        except Exception as e:
-            self.session.rollback()
-            logger.error(f"Failed to update wallet {wallet_id}: {e}")
-            raise
+    from decimal import Decimal
+
+    def update_wallet_balance(
+        self,
+        wallet_id: int,
+        amount: Decimal,
+        operation: str = "add",
+    ) -> Optional[Wallet]:
+        """Update wallet balance (add or subtract). Caller owns the transaction."""
+        wallet = (
+            self.session.query(Wallet)
+            .filter(Wallet.id_wallet == wallet_id)
+            .with_for_update()
+            .first()
+        )
+        if not wallet:
+            return None
+
+        current_balance = wallet.wallet_balance or Decimal("0")
+        amount = Decimal(str(amount))  # defensive; no-op if already Decimal
+
+        if operation == "add":
+            wallet.wallet_balance = current_balance + amount
+        elif operation == "subtract":
+            if current_balance < amount:
+                raise ValueError("Insufficient balance")
+            wallet.wallet_balance = current_balance - amount
+        else:
+            raise ValueError(f"Invalid operation: {operation}")
+
+        self.session.flush()
+        return wallet
     
     def create_wallet(self, wallet_data: Dict[str, Any]) -> Wallet:
         """Create a new wallet"""

@@ -23,7 +23,7 @@ class API_Resolution(BaseModel):
 
 class PaymentCreate(BaseModel):
     invoice_id: int = Field(..., description="Existing invoice ID")
-    amount: float = Field(..., gt=0, description="Payment amount")
+    amount: Decimal = Field(..., gt=0, description="Payment amount")
     payment_method: str = Field(..., description="cash, card, bank_transfer, mobile_money, wallet, deposit")
     user_id: int = Field(..., description="User making the payment")
     notes: Optional[str] = None
@@ -36,14 +36,14 @@ class PaymentConfirm(BaseModel):
 
 class PaymentRefund(BaseModel):
     reason: str = Field(..., description="Refund reason")
-    amount: Optional[float] = Field(None, description="Refund amount (defaults to full payment)")
+    amount: Optional[Decimal] = Field(None, description="Refund amount (defaults to full payment)")
 
 
 class TransactionResponse(BaseModel):
     id: int
     source_wallet: int
     destination_wallet: int
-    amount: float
+    amount: Decimal
     reference: str
     status: str
     created_at: Optional[str] = None
@@ -52,7 +52,7 @@ class TransactionResponse(BaseModel):
 class PaymentResponse(BaseModel):
     payment_id: int
     invoice_id: int
-    amount: float
+    amount: Decimal
     payment_method: Optional[str] = None
     status: str
     reference: str
@@ -61,7 +61,7 @@ class PaymentResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     invoice_status: Optional[str] = None
-    balance_due: Optional[float] = None
+    balance_due: Optional[Decimal] = None
     transactions: Optional[List[TransactionResponse]] = []
     message: Optional[str] = None
     reason: Optional[str] = None
@@ -69,9 +69,9 @@ class PaymentResponse(BaseModel):
 
 class PaymentSummary(BaseModel):
     invoice_id: int
-    total_amount: float
-    total_paid: float
-    balance_due: float
+    total_amount: Decimal
+    total_paid: Decimal
+    balance_due: Decimal
     status: str
     due_date: Optional[str] = None
 
@@ -79,6 +79,6 @@ class PaymentSummary(BaseModel):
 class InvoicePaymentResponse(BaseModel):
     invoice_id: int
     invoice_status: str
-    total_amount: float
+    total_amount: Decimal
     summary: Dict[str, Any]
     payments: List[Dict[str, Any]]

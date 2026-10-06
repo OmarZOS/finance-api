@@ -1,5 +1,6 @@
 # repositories/payment_repository.py
 
+from decimal import Decimal
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -168,9 +169,9 @@ class PaymentRepository:
             
             return {
                 'invoice_id': invoice_id,
-                'total_paid': float(net_paid) if net_paid else 0.0,
-                'total_pending': float(total_pending) if total_pending else 0.0,
-                'total_refunded': float(total_refunded) if total_refunded else 0.0,
+                'total_paid': Decimal(net_paid) if net_paid else 0.0,
+                'total_pending': Decimal(total_pending) if total_pending else 0.0,
+                'total_refunded': Decimal(total_refunded) if total_refunded else 0.0,
                 'payment_count': len(payments),
                 'completed_count': sum(1 for p in payments if p.payment_status == 'completed'),
                 'pending_count': sum(1 for p in payments if p.payment_status == 'pending'),
@@ -224,8 +225,8 @@ class PaymentRepository:
             return {
                 'date': target_date.isoformat(),
                 'total_payments': len(payments),
-                'total_amount': float(total_amount) if total_amount else 0.0,
-                'average_amount': float(total_amount / len(completed_payments)) if completed_payments else 0.0,
+                'total_amount': Decimal(total_amount) if total_amount else 0.0,
+                'average_amount': Decimal(total_amount / len(completed_payments)) if completed_payments else 0.0,
                 'by_status': by_status,
                 'by_method': by_method,
                 'completed_count': len(completed_payments),
@@ -293,7 +294,7 @@ class PaymentRepository:
             logger.error(f"Failed to get payment count for status {status}: {e}")
             return 0
     
-    def get_total_revenue_by_date(self, target_date: Optional[date] = None) -> float:
+    def get_total_revenue_by_date(self, target_date: Optional[date] = None) -> Decimal:
         """
         Get total revenue for a specific date.
         
@@ -301,7 +302,7 @@ class PaymentRepository:
             target_date: The date to get revenue for (defaults to today)
             
         Returns:
-            float: Total revenue for the date
+            Decimal: Total revenue for the date
         """
         try:
             target_date = target_date or datetime.now().date()
@@ -315,7 +316,7 @@ class PaymentRepository:
                 between(Payment.payment_created_at, start_of_day, end_of_day)
             ).scalar()
             
-            return float(result) if result else 0.0
+            return Decimal(result) if result else 0.0
         except Exception as e:
             logger.error(f"Failed to get total revenue for {target_date}: {e}")
             return 0.0

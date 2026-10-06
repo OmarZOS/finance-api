@@ -1,5 +1,6 @@
 # controllers/payment_controller.py
 
+from decimal import Decimal
 from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from lib.payment.payment_service import PaymentService
 logger = logging.getLogger(__name__)
 
 # ==================== ROUTER ====================
-router = APIRouter(tags=["Payments"])
+router = APIRouter()
 
 
 # ==================== REQUEST MODELS ====================
@@ -23,7 +24,7 @@ router = APIRouter(tags=["Payments"])
 class PaymentCreate(BaseModel):
     """Request model for creating a payment"""
     invoice_id: int = Field(..., description="ID of the invoice to pay")
-    amount: float = Field(..., gt=0, description="Payment amount")
+    amount: Decimal = Field(..., gt=0, description="Payment amount")
     payment_method: str = Field(..., description="Payment method: card, cash, bank_transfer, etc.")
     user_id: int = Field(..., description="ID of the user making the payment")
     notes: Optional[str] = Field(None, description="Additional notes")
@@ -40,7 +41,7 @@ class PaymentConfirm(BaseModel):
 
 class PaymentRefund(BaseModel):
     """Request model for refunding a payment"""
-    amount: float = Field(..., gt=0, description="Amount to refund")
+    amount: Decimal = Field(..., gt=0, description="Amount to refund")
     reason: str = Field(..., min_length=1, description="Reason for refund")
 
 
@@ -50,7 +51,7 @@ class TransactionResponse(BaseModel):
     """Transaction details in response"""
     id: int
     wallet_id: int
-    amount: float
+    amount: Decimal
     transaction_type: str
     status: str
     reference: Optional[str] = None
@@ -62,7 +63,7 @@ class PaymentResponse(BaseModel):
     id: int
     invoice_id: int
     user_id: Optional[int] = None  # Make optional since not stored in Payment
-    amount: float
+    amount: Decimal
     payment_method: str
     status: str
     payment_type: str
@@ -76,9 +77,9 @@ class PaymentResponse(BaseModel):
 class InvoicePaymentSummary(BaseModel):
     """Summary of payments for an invoice"""
     invoice_id: int
-    total_amount: float
-    total_paid: float
-    remaining_amount: float
+    total_amount: Decimal
+    total_paid: Decimal
+    remaining_amount: Decimal
     status: str
     payments: List[PaymentResponse] = []
 
@@ -87,8 +88,8 @@ class DailyPaymentStats(BaseModel):
     """Daily payment statistics"""
     date: str
     total_payments: int
-    total_amount: float
-    average_amount: float = 0.0
+    total_amount: Decimal
+    average_amount: Decimal = 0.0
     by_status: Dict[str, int] = {}
     by_method: Dict[str, int] = {}
 

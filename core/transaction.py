@@ -5,6 +5,7 @@ Transaction management utilities for database operations.
 Provides decorators and context managers for atomic transactions.
 """
 
+from decimal import Decimal
 import logging
 from functools import wraps
 from typing import Optional, TypeVar, Callable, Any, Union, List
@@ -40,7 +41,7 @@ class TransactionManager:
     Supports nested transactions, savepoints, and automatic retry.
     """
     
-    def __init__(self, retry_count: int = 3, retry_delay: float = 0.1):
+    def __init__(self, retry_count: int = 3, retry_delay: Decimal = 0.1):
         """
         Initialize transaction manager.
         
@@ -230,7 +231,7 @@ class AtomicTransaction:
             return result
     """
     
-    def __init__(self, retry_count: int = 3, retry_delay: float = 0.1, 
+    def __init__(self, retry_count: int = 3, retry_delay: Decimal = 0.1, 
                  isolation_level: Optional[str] = None):
         self.retry_count = retry_count
         self.retry_delay = retry_delay

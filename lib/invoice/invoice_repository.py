@@ -1,5 +1,6 @@
 # repositories/payment_repository.py
 
+from decimal import Decimal
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -103,9 +104,9 @@ class InvoiceRepository:
             return {
                 'invoice_id': invoice_id,
                 'invoice_number': invoice.invoice_number,
-                'total_amount': float(invoice.invoice_total_amount) if invoice.invoice_total_amount else 0.0,
-                'total_paid': float(total_paid) if total_paid else 0.0,
-                'balance_due': max(0, float(invoice.invoice_total_amount or 0) - float(total_paid or 0)),
+                'total_amount': Decimal(invoice.invoice_total_amount) if invoice.invoice_total_amount else 0.0,
+                'total_paid': Decimal(total_paid) if total_paid else 0.0,
+                'balance_due': max(0, Decimal(invoice.invoice_total_amount or 0) - Decimal(total_paid or 0)),
                 'status': invoice.invoice_status,
                 'due_date': invoice.invoice_due_date.isoformat() if invoice.invoice_due_date else None,
             }
