@@ -34,10 +34,10 @@ class SubscriptionRepository:
                 AppUser.id_app_user == user_id
             ).first()
             
-            if not user or not user.app_user_subscription_ref:
+            if not user or not user.app_user_subscription_id:
                 return None
             
-            return self.get_plan_by_id(user.app_user_subscription_ref)
+            return self.get_plan_by_id(user.app_user_subscription_id)
         except Exception as e:
             logger.error(f"Failed to get user subscription: {e}")
             return None
@@ -56,7 +56,7 @@ class SubscriptionRepository:
             if not plan:
                 return None
             
-            user.app_user_subscription_ref = plan_id
+            user.app_user_subscription_id = plan_id
             user.app_user_last_updated = datetime.now()
             
             self.session.flush()
@@ -71,14 +71,14 @@ class SubscriptionRepository:
         try:
             total_users = self.session.query(AppUser).count()
             subscribed_users = self.session.query(AppUser).filter(
-                AppUser.app_user_subscription_ref.isnot(None)
+                AppUser.app_user_subscription_id.isnot(None)
             ).count()
             
             # Get plan distribution
             plan_distribution = self.session.query(
                 Plan.plan_name,
                 func.count(AppUser.id_app_user).label('count')
-            ).join(AppUser, AppUser.app_user_subscription_ref == Plan.id_plan).group_by(
+            ).join(AppUser, AppUser.app_user_subscription_id == Plan.id_plan).group_by(
                 Plan.id_plan
             ).all()
             

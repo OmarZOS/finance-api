@@ -286,7 +286,7 @@ class InsufficientStockException(APIException):
     def __init__(self, product_name: str, requested: int, available: int):
         super().__init__(
             status_code=HTTP_409_CONFLICT,
-            error_code=ErrorCode.PRODUCT_QUANTITY_NOT_ENOUGH,
+            error_code=ErrorCode.available_quantity_NOT_ENOUGH,
             message=f"Insufficient stock for '{product_name}'. Requested: {requested}, Available: {available}",
             details={
                 "product": product_name,

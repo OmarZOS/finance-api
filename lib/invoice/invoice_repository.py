@@ -58,7 +58,7 @@ class InvoiceRepository:
             if status:
                 query = query.filter(Invoice.invoice_status == status)
             
-            return query.order_by(desc(Invoice.invoice_created_at)).all()
+            return query.order_by(desc(Invoice.created_at)).all()
         except Exception as e:
             logger.error(f"Failed to get invoices for user {user_id}: {e}")
             return []
@@ -74,7 +74,7 @@ class InvoiceRepository:
                 return None
             
             invoice.invoice_status = status
-            invoice.invoice_updated_at = datetime.now()
+            invoice.updated_at = datetime.now()
             
             self.session.flush()
             return invoice

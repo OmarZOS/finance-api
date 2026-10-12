@@ -190,7 +190,7 @@ class PaymentService:
         """Credit the provider's wallet, debit the system wallet."""
         provider_id = None
         if invoice.cart:
-            provider_id = invoice.cart[0].cart_product_provider_id
+            provider_id = invoice.cart[0].cart_provider_id
 
         provider_wallet = self.wallet_service.get_provider_wallet(
             provider_id

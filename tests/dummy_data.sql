@@ -7,8 +7,8 @@
      `invoice_issue_date`, 
      `invoice_due_date`, 
      `invoice_notes`, 
-     `invoice_created_at`, 
-     `invoice_updated_at`, 
+     `created_at`, 
+     `updated_at`, 
      `invoice_type`, 
      `invoice_tax_applied`
  ) VALUES
@@ -234,7 +234,7 @@
 
  -- ==================== VERIFY INSERT ====================
   SELECT COUNT(*) FROM `gluttex`.`invoice`;
- SELECT * FROM `gluttex`.`invoice` ORDER BY `invoice_created_at` ;
+ SELECT * FROM `gluttex`.`invoice` ORDER BY `created_at` ;
 
 
  -- ==================== WALLET DUMMY DATA ====================
