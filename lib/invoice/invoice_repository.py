@@ -103,10 +103,10 @@ class InvoiceRepository:
             
             return {
                 'invoice_id': invoice_id,
-                'invoice_number': invoice.invoice_number,
-                'total_amount': Decimal(invoice.invoice_total_amount) if invoice.invoice_total_amount else 0.0,
+                'invoice_reference': invoice.invoice_reference,
+                'total_amount': Decimal(invoice.grand_total) if invoice.grand_total else 0.0,
                 'total_paid': Decimal(total_paid) if total_paid else 0.0,
-                'balance_due': max(0, Decimal(invoice.invoice_total_amount or 0) - Decimal(total_paid or 0)),
+                'balance_due': max(0, Decimal(invoice.grand_total or 0) - Decimal(total_paid or 0)),
                 'status': invoice.invoice_status,
                 'due_date': invoice.invoice_due_date.isoformat() if invoice.invoice_due_date else None,
             }

@@ -70,7 +70,7 @@ class PaymentService:
 
             summary = self.invoice_repo.get_invoice_totals(invoice_id)
             balance_due = summary.get(
-                "balance_due", invoice.invoice_total_amount or 0
+                "balance_due", invoice.grand_total or 0
             )
             if amount > balance_due:
                 raise APIException(
@@ -298,7 +298,7 @@ class PaymentService:
 
             return {
                 "invoice_id": invoice_id,
-                "total_amount": decimal.Decimal(invoice.invoice_total_amount or 0),
+                "total_amount": decimal.Decimal(invoice.grand_total or 0),
                 "total_paid": decimal.Decimal(summary.get("total_paid", 0)),
                 "remaining_amount": decimal.Decimal(
                     summary.get("balance_due", 0)
@@ -490,7 +490,7 @@ class PaymentService:
 
         if total_paid <= 0:
             status = "unpaid"
-        elif total_paid >= invoice.invoice_total_amount:
+        elif total_paid >= invoice.grand_total:
             status = "paid"
         else:
             status = "partially_paid"

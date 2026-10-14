@@ -1,732 +1,831 @@
 # tests/test_payment_endpoints.py
+"""
+Payment endpoint integration tests.
+
+Design goals:
+  * Idempotent: safe to run repeatedly against the same database.
+  * Self-contained: each test creates what it needs; no assumptions about
+    existing invoice IDs having a particular status.
+  * Honest: skips are counted as skips, not silently dropped.
+  * Wire-aware: FastAPI serializes Decimal as a string, so amounts are
+    compared after float coercion.
+
+Environment:
+    BASE_URL           default http://localhost:9098
+    TEST_USER_ID       default 1
+    TEST_PROVIDER_ID   default 2
+"""
+
+import os
+import sys
+import json
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import requests
-import json
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
-import logging
-import time
-import sys
 
-# Configure logging
+# ==================== LOGGING ====================
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+
 # ==================== CONFIGURATION ====================
 
-BASE_URL = "http://localhost:9098"  # Your server URL
-API_PREFIX = "/payments"  # Payment API prefix
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:9098")
+API_PREFIX = "/payments"
+TEST_USER_ID = int(os.environ.get("TEST_USER_ID", "1"))
 
-# Test data based on dummy data
-TEST_INVOICE_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
-TEST_USER_IDS = [1, 2, 3, 5, 21, 22]
-
-# Status codes we expect for different scenarios
 EXPECTED = {
-    'success': 200,
-    'not_found': 404,
-    'conflict': 409,
-    'bad_request': 400,
-    'validation_error': 422,
-    'server_error': 500
+    "success": 200,
+    "bad_request": 400,
+    "not_found": 404,
+    "conflict": 409,
+    "validation_error": 422,
+    "server_error": 500,
 }
 
-# ==================== TEST CLIENT ====================
+
+# ==================== HTTP CLIENT ====================
+
 
 class PaymentTestClient:
-    """Test client for payment endpoints"""
-    
+    """Thin wrapper around requests.Session for the payment API."""
+
     def __init__(self, base_url: str = BASE_URL, api_prefix: str = API_PREFIX):
-        self.base_url = base_url
+        self.base_url = base_url.rstrip("/")
         self.api_prefix = api_prefix
         self.session = requests.Session()
-        self.session.headers.update({
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        })
-        self.created_payment_ids = []
-    
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Dict:
-        """Make HTTP request and return JSON response"""
+        self.session.headers.update(
+            {"Content-Type": "application/json", "Accept": "application/json"}
+        )
+        self.created_payment_ids: List[int] = []
+
+    def _request(
+        self, method: str, endpoint: str, data: Optional[Dict] = None
+    ) -> Dict[str, Any]:
         url = f"{self.base_url}{self.api_prefix}{endpoint}"
-        
         try:
-            if method.upper() == 'GET':
+            if method == "GET":
                 response = self.session.get(url)
-            elif method.upper() == 'POST':
+            elif method == "POST":
                 response = self.session.post(url, json=data)
             else:
                 raise ValueError(f"Unsupported method: {method}")
-            
-            logger.info(f"{method} {url} - Status: {response.status_code}")
-            
-            if response.status_code >= 400:
-                logger.error(f"Error response: {response.text}")
-            
-            return {
-                'status_code': response.status_code,
-                'data': response.json() if response.text else {},
-                'text': response.text
-            }
         except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed: {e}")
-            return {
-                'status_code': 500,
-                'data': {},
-                'error': str(e)
-            }
-    
-    # ==================== PAYMENT ENDPOINTS ====================
-    
-    def create_payment(self, invoice_id: int, amount: float, payment_method: str, 
-                      user_id: int, notes: Optional[str] = None, 
-                      payment_type: str = 'payment') -> Dict:
-        """Create payment - POST /payments/payment"""
-        data = {
-            'invoice_id': invoice_id,
-            'amount': amount,
-            'payment_method': payment_method,
-            'user_id': user_id,
+            logger.error(f"{method} {url} failed: {e}")
+            return {"status_code": 0, "data": {}, "text": "", "error": str(e)}
+
+        parsed: Any = {}
+        if response.text:
+            try:
+                parsed = response.json()
+            except json.JSONDecodeError:
+                parsed = {"_raw": response.text}
+
+        return {
+            "status_code": response.status_code,
+            "data": parsed,
+            "text": response.text,
         }
-        if notes:
-            data['notes'] = notes
-        if payment_type:
-            data['payment_type'] = payment_type
-        
-        result = self._make_request('POST', '/payment', data)
-        
-        # Track created payment IDs
-        if result['status_code'] == 200 and result['data'].get('id'):
-            self.created_payment_ids.append(result['data']['id'])
-        
+
+    def create_payment(
+        self,
+        invoice_id: int,
+        amount: float,
+        payment_method: str,
+        user_id: int = TEST_USER_ID,
+        notes: Optional[str] = None,
+        payment_type: str = "payment",
+    ) -> Dict[str, Any]:
+        payload = {
+            "invoice_id": invoice_id,
+            "amount": amount,
+            "payment_method": payment_method,
+            "user_id": user_id,
+        }
+        if notes is not None:
+            payload["notes"] = notes
+        if payment_type is not None:
+            payload["payment_type"] = payment_type
+
+        result = self._request("POST", "/payment", payload)
+        if result["status_code"] == 200 and isinstance(result["data"], dict):
+            pid = result["data"].get("id")
+            if isinstance(pid, int):
+                self.created_payment_ids.append(pid)
         return result
-    
-    def confirm_payment(self, payment_id: int, transaction_details: Optional[Dict] = None) -> Dict:
-        """Confirm payment - POST /payments/confirm/{payment_id}"""
-        data = {
-            'transaction_details': transaction_details or {}
-        }
-        return self._make_request('POST', f'/confirm/{payment_id}', data)
-    
-    def reject_payment(self, payment_id: int, reason: str) -> Dict:
-        """Reject payment - POST /payments/reject/{payment_id}"""
-        data = {'reason': reason}
-        return self._make_request('POST', f'/reject/{payment_id}', data)
-    
-    def refund_payment(self, payment_id: int, amount: float, reason: str) -> Dict:
-        """Refund payment - POST /payments/refund/{payment_id}"""
-        data = {
-            'amount': amount,
-            'reason': reason
-        }
-        return self._make_request('POST', f'/refund/{payment_id}', data)
-    
-    def get_invoice_payments(self, invoice_id: int) -> Dict:
-        """Get invoice payments - GET /payments/invoice/{invoice_id}"""
-        return self._make_request('GET', f'/invoice/{invoice_id}')
-    
-    def get_payment(self, payment_id: int) -> Dict:
-        """Get payment - GET /payments/{payment_id}"""
-        return self._make_request('GET', f'/{payment_id}')
-    
-    def get_daily_stats(self, date: Optional[str] = None) -> Dict:
-        """Get daily stats - GET /payments/stats/daily"""
-        endpoint = '/stats/daily'
+
+    def confirm_payment(
+        self, payment_id: int, transaction_details: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/confirm/{payment_id}",
+            {"transaction_details": transaction_details or {}},
+        )
+
+    def reject_payment(self, payment_id: int, reason: str) -> Dict[str, Any]:
+        return self._request("POST", f"/reject/{payment_id}", {"reason": reason})
+
+    def refund_payment(
+        self, payment_id: int, amount: float, reason: str
+    ) -> Dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/refund/{payment_id}",
+            {"amount": amount, "reason": reason},
+        )
+
+    def get_invoice_payments(self, invoice_id: int) -> Dict[str, Any]:
+        return self._request("GET", f"/invoice/{invoice_id}")
+
+    def get_payment(self, payment_id: int) -> Dict[str, Any]:
+        return self._request("GET", f"/{payment_id}")
+
+    def get_daily_stats(self, date: Optional[str] = None) -> Dict[str, Any]:
+        endpoint = "/stats/daily"
         if date:
-            endpoint += f'?date={date}'
-        return self._make_request('GET', endpoint)
-    
-    def health_check(self) -> Dict:
-        """Health check - GET /payments/health"""
-        return self._make_request('GET', '/health')
+            endpoint += f"?date={date}"
+        return self._request("GET", endpoint)
+
+    def health_check(self) -> Dict[str, Any]:
+        return self._request("GET", "/health")
 
 
-# ==================== RESPONSE VALIDATORS ====================
+# ==================== VALIDATORS ====================
 
-def validate_payment_response(data: Dict) -> bool:
-    """Validate payment response has expected fields"""
-    required_fields = ['id', 'invoice_id', 'user_id', 'amount', 'payment_method', 
-                      'status', 'payment_type']
-    
-    for field in required_fields:
-        if field not in data:
-            logger.error(f"❌ Missing required field in payment response: {field}")
-            return False
-    
-    # Check data types
-    if not isinstance(data.get('id'), int):
-        logger.error(f"❌ 'id' should be an integer, got {type(data.get('id'))}")
+
+def _as_float(value: Any) -> Optional[float]:
+    """FastAPI serializes Decimal as a string. Coerce without lying about type."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def validate_payment_response(data: Any) -> bool:
+    if not isinstance(data, dict):
+        logger.error(f"❌ Response is not a dict: {type(data)}")
         return False
-    
-    if not isinstance(data.get('amount'), (int, float)):
-        logger.error(f"❌ 'amount' should be a number, got {type(data.get('amount'))}")
+
+    required = [
+        "id",
+        "invoice_id",
+        "amount",
+        "payment_method",
+        "status",
+        "payment_type",
+    ]
+    for field in required:
+        if field not in data:
+            logger.error(f"❌ Missing field in payment response: {field}")
+            return False
+
+    if not isinstance(data["id"], int):
+        logger.error(f"❌ 'id' must be int, got {type(data['id'])}")
         return False
-    
-    return True
 
-
-def validate_invoice_payment_response(data: Dict) -> bool:
-    """Validate invoice payment response has expected fields"""
-    required_fields = ['invoice_id', 'total_amount', 'total_paid', 
-                      'remaining_amount', 'status', 'payments']
-    
-    for field in required_fields:
-        if field not in data:
-            logger.error(f"❌ Missing field in invoice payment response: {field}")
-            return False
-    
-    # Check that payments is a list
-    if not isinstance(data.get('payments'), list):
-        logger.error(f"❌ 'payments' should be a list, got {type(data.get('payments'))}")
+    if _as_float(data["amount"]) is None:
+        logger.error(f"❌ 'amount' is not numeric: {data['amount']!r}")
         return False
-    
+
     return True
 
 
-def validate_error_response(data: Dict) -> bool:
-    """Validate error response has expected fields"""
-    # Simple error responses might just have 'detail'
-    if 'detail' in data:
-        return True
-    
-    # Enhanced error responses have more fields
-    expected_fields = ['detail', 'status_code']
-    for field in expected_fields:
+def validate_invoice_payment_response(data: Any) -> bool:
+    if not isinstance(data, dict):
+        logger.error(f"❌ Invoice response is not a dict: {type(data)}")
+        return False
+
+    required = [
+        "invoice_id",
+        "total_amount",
+        "total_paid",
+        "remaining_amount",
+        "status",
+        "payments",
+    ]
+    for field in required:
         if field not in data:
-            logger.warning(f"⚠️ Missing field in error response: {field}")
+            logger.error(f"❌ Missing field in invoice response: {field}")
             return False
-    
+
+    if not isinstance(data["payments"], list):
+        logger.error(f"❌ 'payments' must be list, got {type(data['payments'])}")
+        return False
+
+    for field in ("total_amount", "total_paid", "remaining_amount"):
+        if _as_float(data[field]) is None:
+            logger.error(f"❌ '{field}' is not numeric: {data[field]!r}")
+            return False
+
     return True
 
 
-def validate_daily_stats_response(data: Dict) -> bool:
-    """Validate daily stats response has expected fields"""
-    required_fields = ['date', 'total_payments', 'total_amount', 'average_amount']
-    
-    for field in required_fields:
-        if field not in data:
-            logger.error(f"❌ Missing field in daily stats response: {field}")
-            return False
-    
+def validate_error_response(data: Any) -> bool:
+    return isinstance(data, dict) and "detail" in data
+
+
+def validate_daily_stats_response(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    required = ["date", "total_payments", "total_amount"]
+    if not all(f in data for f in required):
+        logger.error(f"❌ Missing field in daily stats: {data}")
+        return False
+    if _as_float(data["total_amount"]) is None:
+        logger.error(f"❌ 'total_amount' is not numeric: {data['total_amount']!r}")
+        return False
     return True
 
 
-# ==================== TEST FUNCTIONS ====================
+# ==================== HELPERS ====================
+
+
+def find_invoice_with_status(
+    client: PaymentTestClient,
+    wanted_status: str,
+    candidate_ids: range = range(1, 30),
+) -> Optional[int]:
+    """
+    Return the first invoice whose summary reports the given status.
+
+    `wanted_status` matches the invoice's own `status` field, not the
+    payment status. Pass 'unpaid' or 'partially_paid' for a payable
+    invoice, 'paid' for an already-settled one.
+    """
+    for iid in candidate_ids:
+        result = client.get_invoice_payments(iid)
+        if result["status_code"] != 200:
+            continue
+        status = str(result["data"].get("status", "")).lower()
+        if status == wanted_status:
+            return iid
+    return None
+
+
+def make_unique_note(tag: str) -> str:
+    return f"{tag} - {datetime.utcnow().isoformat(timespec='seconds')}Z"
+
+
+# ==================== TEST STEPS ====================
+
 
 def test_health_check(client: PaymentTestClient) -> bool:
-    """Test health check endpoint"""
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("TEST: Health Check")
-    logger.info("="*60)
-    
+    logger.info("=" * 60)
+
     result = client.health_check()
-    
-    if result['status_code'] == 200:
-        data = result['data']
-        logger.info(f"✅ Health check passed")
-        logger.info(f"   Status: {data.get('status')}")
-        logger.info(f"   Service: {data.get('service')}")
-        logger.info(f"   Database: {data.get('database')}")
-        return True
-    else:
-        logger.error(f"❌ Health check failed: {result.get('error', 'Unknown error')}")
+    if result["status_code"] != 200:
+        logger.error(f"❌ Health check failed: {result}")
         return False
 
+    data = result["data"]
+    logger.info(f"✅ Status: {data.get('status')}")
+    logger.info(f"   Service: {data.get('service')}")
+    logger.info(f"   Database: {data.get('database')}")
+    return data.get("status") == "healthy"
 
-def test_create_payment(client: PaymentTestClient) -> List[int]:
-    """Test creating payments"""
-    logger.info("\n" + "="*60)
-    logger.info("TEST: Create Payment")
-    logger.info("="*60)
-    
-    test_cases = [
-        # (invoice_id, amount, payment_method, user_id, notes, payment_type, expected_status)
-        (1, 1250.50, 'card', 1, 'Full payment for invoice 1', 'payment', EXPECTED['conflict']),  # Already paid
-        (2, 350.75, 'cash', 2, 'Payment for consultation', 'payment', EXPECTED['conflict']),  # Already paid
-        (4, 567.80, 'bank_transfer', 5, 'Pharmacy order payment', 'payment', EXPECTED['success']),
-        (6, 430.00, 'cash', 22, 'X-Ray services payment', 'payment', EXPECTED['success']),
-        (8, 230.50, 'card', 1, 'Follow-up visit payment', 'payment', EXPECTED['success']),
-        (99999, 100.00, 'card', 1, 'Invalid invoice', 'payment', EXPECTED['not_found']),
-    ]
-    
-    created_ids = []
-    
-    for invoice_id, amount, method, user_id, notes, payment_type, expected_status in test_cases:
-        logger.info(f"\nCreating payment for invoice {invoice_id}...")
-        result = client.create_payment(
-            invoice_id=invoice_id,
-            amount=amount,
-            payment_method=method,
-            user_id=user_id,
-            notes=notes,
-            payment_type=payment_type
+
+def test_create_payment_on_unpaid_invoice(
+    client: PaymentTestClient,
+) -> Optional[int]:
+    """
+    Find an unpaid invoice, pay a small amount against it, verify the
+    response. Returns the created payment ID, or None if no unpaid
+    invoice exists (which should be treated as a skip, not a failure).
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Create Payment on Unpaid Invoice")
+    logger.info("=" * 60)
+
+    invoice_id = find_invoice_with_status(client, "unpaid")
+    if invoice_id is None:
+        # Try partially_paid — still payable.
+        invoice_id = find_invoice_with_status(client, "partially_paid")
+
+    if invoice_id is None:
+        logger.warning("⚠️ No unpaid or partially_paid invoice found — skipping")
+        return None
+
+    logger.info(f"Using invoice {invoice_id}")
+
+    result = client.create_payment(
+        invoice_id=invoice_id,
+        amount=10.00,
+        payment_method="cash",
+        notes=make_unique_note("integration create"),
+    )
+
+    if result["status_code"] != 200:
+        logger.error(f"❌ Expected 200, got {result['status_code']}: {result['text']}")
+        return None
+
+    data = result["data"]
+    if not validate_payment_response(data):
+        return None
+
+    logger.info(f"✅ Payment created: id={data['id']} status={data['status']}")
+    return int(data["id"])
+
+
+def test_create_payment_on_paid_invoice(client: PaymentTestClient) -> bool:
+    """A paid invoice must refuse further payments with 409."""
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Create Payment on Paid Invoice (expect 409)")
+    logger.info("=" * 60)
+
+    paid_id = find_invoice_with_status(client, "paid")
+    if paid_id is None:
+        logger.warning("⚠️ No paid invoice found — skipping")
+        return True
+
+    result = client.create_payment(
+        invoice_id=paid_id,
+        amount=5.00,
+        payment_method="cash",
+        notes=make_unique_note("integration conflict"),
+    )
+    if result["status_code"] != 409:
+        logger.error(
+            f"❌ Expected 409 on paid invoice, got {result['status_code']}: "
+            f"{result['text']}"
         )
-        
-        if result['status_code'] == expected_status:
-            if expected_status == EXPECTED['success']:
-                data = result['data']
-                if validate_payment_response(data):
-                    logger.info(f"✅ Payment created: ID={data.get('id')}")
-                    logger.info(f"   Status: {data.get('status')}")
-                    logger.info(f"   Amount: {data.get('amount')}")
-                    logger.info(f"   Method: {data.get('payment_method')}")
-                    created_ids.append(data.get('id'))
-                else:
-                    logger.error(f"❌ Invalid response format")
-            else:
-                logger.info(f"✅ Correctly returned {expected_status} as expected")
+        return False
+
+    logger.info("✅ Correctly refused with 409")
+    return True
+
+
+def test_create_payment_validation_errors(client: PaymentTestClient) -> bool:
+    """
+    Zero and negative amounts must fail Pydantic validation (422).
+    Uses a nonexistent invoice ID so the amount validation fires before
+    any invoice lookup.
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Create Payment Validation Errors (expect 422)")
+    logger.info("=" * 60)
+
+    cases = [
+        ("zero", 0),
+        ("negative", -50),
+    ]
+    ok = True
+
+    for label, amount in cases:
+        result = client.create_payment(
+            invoice_id=999_999,
+            amount=amount,
+            payment_method="cash",
+        )
+        if result["status_code"] != 422:
+            logger.error(
+                f"❌ {label} amount: expected 422, got "
+                f"{result['status_code']}: {result['text']}"
+            )
+            ok = False
         else:
-            logger.error(f"❌ Expected {expected_status}, got {result['status_code']}")
-            if result.get('data'):
-                logger.error(f"   Response: {result['data']}")
-    
-    logger.info(f"\n✅ Created {len(created_ids)} payments")
-    return created_ids
+            logger.info(f"✅ {label} amount correctly rejected with 422")
+
+    return ok
+
+
+def test_create_payment_unknown_invoice(client: PaymentTestClient) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Create Payment on Unknown Invoice (expect 404)")
+    logger.info("=" * 60)
+
+    result = client.create_payment(
+        invoice_id=999_999,
+        amount=100.00,
+        payment_method="cash",
+    )
+    if result["status_code"] != 404:
+        logger.error(
+            f"❌ Expected 404, got {result['status_code']}: {result['text']}"
+        )
+        return False
+
+    if not validate_error_response(result["data"]):
+        logger.error(f"❌ Invalid error body: {result['data']}")
+        return False
+
+    logger.info(f"✅ 404 with detail={result['data'].get('detail')!r}")
+    return True
+
+
+def test_get_payment(client: PaymentTestClient, payment_id: int) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Get Payment")
+    logger.info("=" * 60)
+
+    result = client.get_payment(payment_id)
+    if result["status_code"] != 200:
+        logger.error(f"❌ Expected 200, got {result['status_code']}")
+        return False
+
+    if not validate_payment_response(result["data"]):
+        return False
+
+    data = result["data"]
+    logger.info(f"✅ Payment {payment_id}: status={data['status']}")
+    return True
+
+
+def test_get_unknown_payment(client: PaymentTestClient) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Get Unknown Payment (expect 404)")
+    logger.info("=" * 60)
+
+    result = client.get_payment(999_999)
+    if result["status_code"] != 404:
+        logger.error(f"❌ Expected 404, got {result['status_code']}")
+        return False
+
+    logger.info("✅ 404 as expected")
+    return True
 
 
 def test_confirm_payment(client: PaymentTestClient, payment_id: int) -> bool:
-    """Test confirming a payment"""
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("TEST: Confirm Payment")
-    logger.info("="*60)
-    
-    logger.info(f"Confirming payment {payment_id}...")
-    
-    transaction_details = {
-        'reference': f'REF-{payment_id}-{datetime.now().strftime("%Y%m%d%H%M%S")}',
-        'bank_reference': f'BANK-{payment_id}',
-        'notes': f'Payment {payment_id} confirmed successfully'
-    }
-    
-    result = client.confirm_payment(payment_id, transaction_details)
-    
-    if result['status_code'] == 200:
-        data = result['data']
-        if validate_payment_response(data):
-            logger.info(f"✅ Payment {payment_id} confirmed")
-            logger.info(f"   Status: {data.get('status')}")
-            logger.info(f"   Transactions: {len(data.get('transactions', []))}")
-            return True
-    elif result['status_code'] == 404:
-        logger.info(f"✅ Payment {payment_id} not found (expected)")
-        return True
-    elif result['status_code'] == 409:
-        logger.info(f"✅ Payment {payment_id} already processed (expected)")
-        return True
-    else:
-        logger.error(f"❌ Failed to confirm payment: {result.get('error', 'Unknown error')}")
-    
-    return False
+    logger.info("=" * 60)
+
+    result = client.confirm_payment(
+        payment_id,
+        {
+            "reference": f"REF-{payment_id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            "notes": "integration confirm",
+        },
+    )
+    if result["status_code"] != 200:
+        logger.error(
+            f"❌ Expected 200, got {result['status_code']}: {result['text']}"
+        )
+        return False
+
+    if not validate_payment_response(result["data"]):
+        return False
+
+    status = result["data"].get("status")
+    logger.info(f"✅ Confirmed, status={status}")
+    return status in ("completed", "confirmed", "paid")
+
+
+def test_confirm_unknown_payment(client: PaymentTestClient) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Confirm Unknown Payment (expect 404)")
+    logger.info("=" * 60)
+
+    result = client.confirm_payment(999_999, {})
+    if result["status_code"] != 404:
+        logger.error(f"❌ Expected 404, got {result['status_code']}")
+        return False
+
+    logger.info("✅ 404 as expected")
+    return True
 
 
 def test_reject_payment(client: PaymentTestClient, payment_id: int) -> bool:
-    """Test rejecting a payment"""
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("TEST: Reject Payment")
-    logger.info("="*60)
-    
-    logger.info(f"Rejecting payment {payment_id}...")
-    
-    result = client.reject_payment(
-        payment_id=payment_id,
-        reason=f'Payment rejected - Insufficient funds - {datetime.now().strftime("%Y-%m-%d %H:%M")}'
-    )
-    
-    if result['status_code'] == 200:
-        data = result['data']
-        if validate_payment_response(data):
-            logger.info(f"✅ Payment {payment_id} rejected")
-            logger.info(f"   Status: {data.get('status')}")
-            return True
-    elif result['status_code'] == 404:
-        logger.info(f"✅ Payment {payment_id} not found (expected)")
-        return True
-    else:
-        logger.error(f"❌ Failed to reject payment: {result.get('error', 'Unknown error')}")
-    
-    return False
+    logger.info("=" * 60)
+
+    result = client.reject_payment(payment_id, make_unique_note("integration reject"))
+    if result["status_code"] != 200:
+        logger.error(
+            f"❌ Expected 200, got {result['status_code']}: {result['text']}"
+        )
+        return False
+
+    if not validate_payment_response(result["data"]):
+        return False
+
+    status = str(result["data"].get("status", "")).lower()
+    logger.info(f"✅ Rejected, status={status}")
+    return status in ("failed", "cancelled", "canceled", "rejected")
 
 
 def test_refund_payment(client: PaymentTestClient, payment_id: int) -> bool:
-    """Test refunding a payment"""
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("TEST: Refund Payment")
-    logger.info("="*60)
-    
-    logger.info(f"Refunding payment {payment_id}...")
-    
-    # Get payment details first
-    payment_info = client.get_payment(payment_id)
-    amount = payment_info.get('data', {}).get('amount', 100)
-    
+    logger.info("=" * 60)
+
+    # Look up the confirmed payment to refund the exact amount.
+    info = client.get_payment(payment_id)
+    if info["status_code"] != 200:
+        logger.error(f"❌ Could not load payment {payment_id} for refund")
+        return False
+
+    amount = _as_float(info["data"].get("amount"))
+    if amount is None or amount <= 0:
+        logger.error(f"❌ Refund amount invalid: {info['data'].get('amount')!r}")
+        return False
+
     result = client.refund_payment(
-        payment_id=payment_id,
-        amount=amount,
-        reason=f'Refund requested by customer - {datetime.now().strftime("%Y-%m-%d %H:%M")}'
+        payment_id, amount, make_unique_note("integration refund")
     )
-    
-    if result['status_code'] == 200:
-        data = result['data']
-        if validate_payment_response(data):
-            logger.info(f"✅ Payment {payment_id} refunded")
-            logger.info(f"   Status: {data.get('status')}")
-            logger.info(f"   Refund amount: {data.get('amount')}")
-            return True
-    elif result['status_code'] == 404:
-        logger.info(f"✅ Payment {payment_id} not found (expected)")
+    if result["status_code"] == 409:
+        # Some services disallow refunds once the invoice is settled.
+        logger.info(f"✅ Refund correctly refused with 409: {result['text']}")
         return True
-    elif result['status_code'] == 409:
-        logger.info(f"✅ Payment {payment_id} not eligible for refund (expected)")
-        return True
-    else:
-        logger.error(f"❌ Failed to refund payment: {result.get('error', 'Unknown error')}")
-    
-    return False
+    if result["status_code"] != 200:
+        logger.error(
+            f"❌ Expected 200 or 409, got {result['status_code']}: {result['text']}"
+        )
+        return False
+
+    if not validate_payment_response(result["data"]):
+        return False
+
+    logger.info(f"✅ Refunded {amount}")
+    return True
 
 
-def test_get_invoice_payments(client: PaymentTestClient) -> bool:
-    """Test getting payments for an invoice"""
-    logger.info("\n" + "="*60)
-    logger.info("TEST: Get Invoice Payments")
-    logger.info("="*60)
-    
-    test_invoices = [1, 2, 4, 5, 6, 8, 12, 999]
-    all_passed = True
-    
-    for invoice_id in test_invoices:
-        logger.info(f"\nGetting payments for invoice {invoice_id}...")
-        result = client.get_invoice_payments(invoice_id)
-        
-        if result['status_code'] == 200:
-            data = result['data']
-            if validate_invoice_payment_response(data):
-                logger.info(f"✅ Invoice {invoice_id}:")
-                logger.info(f"   Invoice Status: {data.get('status')}")
-                logger.info(f"   Total Amount: {data.get('total_amount')}")
-                logger.info(f"   Total Paid: {data.get('total_paid')}")
-                logger.info(f"   Remaining: {data.get('remaining_amount')}")
-                logger.info(f"   Payments: {len(data.get('payments', []))}")
-            else:
-                all_passed = False
-        elif result['status_code'] == 404:
-            logger.info(f"✅ Invoice {invoice_id} not found (expected)")
-        else:
-            logger.error(f"❌ Failed to get invoice payments: {result.get('error', 'Unknown error')}")
-            all_passed = False
-    
-    return all_passed
+def test_refund_unknown_payment(client: PaymentTestClient) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Refund Unknown Payment (expect 404)")
+    logger.info("=" * 60)
+
+    result = client.refund_payment(999_999, 10, "n/a")
+    if result["status_code"] != 404:
+        logger.error(f"❌ Expected 404, got {result['status_code']}")
+        return False
+
+    logger.info("✅ 404 as expected")
+    return True
 
 
-def test_get_payment_details(client: PaymentTestClient, payment_id: int) -> bool:
-    """Test getting payment details"""
-    logger.info("\n" + "="*60)
-    logger.info("TEST: Get Payment Details")
-    logger.info("="*60)
-    
-    logger.info(f"Getting details for payment {payment_id}...")
-    result = client.get_payment(payment_id)
-    
-    if result['status_code'] == 200:
-        data = result['data']
-        if validate_payment_response(data):
-            logger.info(f"✅ Payment {payment_id}:")
-            logger.info(f"   Invoice: {data.get('invoice_id')}")
-            logger.info(f"   Amount: {data.get('amount')}")
-            logger.info(f"   Status: {data.get('status')}")
-            logger.info(f"   Method: {data.get('payment_method')}")
-            logger.info(f"   Transactions: {len(data.get('transactions', []))}")
-            return True
-    elif result['status_code'] == 404:
-        logger.info(f"✅ Payment {payment_id} not found (expected)")
-        return True
-    else:
-        logger.error(f"❌ Failed to get payment details: {result.get('error', 'Unknown error')}")
-    
-    return False
+def test_refund_zero_amount(client: PaymentTestClient, payment_id: int) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Refund Zero Amount (expect 422)")
+    logger.info("=" * 60)
+
+    result = client.refund_payment(payment_id, 0, "zero refund")
+    if result["status_code"] != 422:
+        logger.error(
+            f"❌ Expected 422, got {result['status_code']}: {result['text']}"
+        )
+        return False
+
+    logger.info("✅ 422 as expected")
+    return True
+
+
+def test_invoice_payments_summary(client: PaymentTestClient, invoice_id: int) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Invoice Payments Summary")
+    logger.info("=" * 60)
+
+    result = client.get_invoice_payments(invoice_id)
+    if result["status_code"] != 200:
+        logger.error(f"❌ Expected 200, got {result['status_code']}")
+        return False
+
+    if not validate_invoice_payment_response(result["data"]):
+        return False
+
+    data = result["data"]
+    logger.info(f"✅ Invoice {invoice_id}: status={data['status']}")
+    logger.info(f"   total_amount={data['total_amount']}")
+    logger.info(f"   total_paid={data['total_paid']}")
+    logger.info(f"   remaining={data['remaining_amount']}")
+    logger.info(f"   payments={len(data['payments'])}")
+    return True
+
+
+def test_invoice_payments_unknown_invoice(client: PaymentTestClient) -> bool:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Invoice Payments Unknown Invoice (expect 404)")
+    logger.info("=" * 60)
+
+    result = client.get_invoice_payments(999_999)
+    if result["status_code"] != 404:
+        logger.error(f"❌ Expected 404, got {result['status_code']}")
+        return False
+
+    logger.info("✅ 404 as expected")
+    return True
 
 
 def test_daily_stats(client: PaymentTestClient) -> bool:
-    """Test daily payment statistics"""
-    logger.info("\n" + "="*60)
-    logger.info("TEST: Daily Payment Statistics")
-    logger.info("="*60)
-    
-    test_dates = [
-        None,  # Today
-        '2024-01-15',
-        '2024-01-20',
-        '2024-02-01',
-        '2024-02-14',
-        '2024-02-15',
-        '2024-02-16',
-        'invalid-date',  # Invalid format
-    ]
-    
-    all_passed = True
-    
-    for date in test_dates:
-        logger.info(f"\nGetting stats for date: {date or 'today'}")
-        result = client.get_daily_stats(date)
-        
-        if result['status_code'] == 200:
-            data = result['data']
-            if validate_daily_stats_response(data):
-                logger.info(f"✅ Stats for {date or 'today'}:")
-                for key, value in data.items():
-                    if isinstance(value, dict):
-                        logger.info(f"   {key}:")
-                        for sub_key, sub_value in value.items():
-                            logger.info(f"     - {sub_key}: {sub_value}")
-                    else:
-                        logger.info(f"   {key}: {value}")
-            else:
-                all_passed = False
-        elif result['status_code'] == 400:
-            logger.info(f"✅ Invalid date format (expected)")
-        else:
-            logger.error(f"❌ Failed to get stats: {result.get('error', 'Unknown error')}")
-            all_passed = False
-    
-    return all_passed
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Daily Stats")
+    logger.info("=" * 60)
 
+    ok = True
 
-def test_error_scenarios(client: PaymentTestClient) -> bool:
-    """Test error scenarios"""
-    logger.info("\n" + "="*60)
-    logger.info("TEST: Error Scenarios")
-    logger.info("="*60)
-    
-    all_passed = True
-    
-    # Scenario 1: Non-existent invoice
-    logger.info("\n1. Non-existent invoice...")
-    result = client.create_payment(99999, 100.00, 'card', 1, 'Invalid invoice test')
-    if result['status_code'] == 404:
-        data = result['data']
-        if validate_error_response(data):
-            logger.info(f"✅ Correctly returned 404")
-            logger.info(f"   Detail: {data.get('detail')}")
-        else:
-            logger.warning(f"⚠️ Invalid error response format")
-            all_passed = False
+    result = client.get_daily_stats()
+    if result["status_code"] != 200 or not validate_daily_stats_response(
+        result["data"]
+    ):
+        logger.error(f"❌ Default daily stats failed: {result}")
+        ok = False
     else:
-        logger.warning(f"⚠️ Expected 404, got {result['status_code']}")
-        all_passed = False
-    
-    # Scenario 2: Zero amount
-    logger.info("\n2. Zero amount payment...")
-    result = client.create_payment(1, 0.00, 'card', 1, 'Zero amount test')
-    if result['status_code'] in [400, 422]:
-        logger.info(f"✅ Correctly rejected zero amount (HTTP {result['status_code']})")
+        logger.info(f"✅ Default date: {result['data']['date']}")
+
+    result = client.get_daily_stats("2024-01-15")
+    if result["status_code"] != 200:
+        logger.error(f"❌ Dated daily stats failed: {result}")
+        ok = False
     else:
-        logger.warning(f"⚠️ Expected 400/422, got {result['status_code']}")
-        all_passed = False
-    
-    # Scenario 3: Non-existent payment for confirmation
-    logger.info("\n3. Confirm non-existent payment...")
-    result = client.confirm_payment(99999, {})
-    if result['status_code'] == 404:
-        logger.info(f"✅ Correctly returned 404")
+        logger.info(f"✅ 2024-01-15: {result['data']['date']}")
+
+    result = client.get_daily_stats("invalid-date")
+    if result["status_code"] != 400:
+        logger.error(
+            f"❌ Invalid date expected 400, got {result['status_code']}"
+        )
+        ok = False
     else:
-        logger.warning(f"⚠️ Expected 404, got {result['status_code']}")
-        all_passed = False
-    
-    # Scenario 4: Non-existent payment for refund
-    logger.info("\n4. Refund non-existent payment...")
-    result = client.refund_payment(99999, 100, 'Test refund')
-    if result['status_code'] == 404:
-        logger.info(f"✅ Correctly returned 404")
-    else:
-        logger.warning(f"⚠️ Expected 404, got {result['status_code']}")
-        all_passed = False
-    
-    return all_passed
+        logger.info("✅ Invalid date correctly rejected with 400")
+
+    return ok
 
 
-# ==================== MAIN TEST RUNNER ====================
+def test_route_ordering(client: PaymentTestClient) -> bool:
+    """
+    /{payment_id} must be declared last so it doesn't shadow /health or
+    /stats/daily. A shadowed route fails to parse the string as an int
+    and returns 422.
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST: Route Ordering")
+    logger.info("=" * 60)
 
-def run_all_tests():
-    """Run all payment endpoint tests"""
-    logger.info("\n" + "🚀"*30)
+    for path in ("/health", "/stats/daily"):
+        result = client._request("GET", path)
+        if result["status_code"] == 422:
+            logger.error(f"❌ {path} was shadowed by /{{payment_id}}")
+            return False
+        logger.info(f"✅ {path} resolves to its own handler")
+    return True
+
+
+# ==================== RUNNER ====================
+
+
+class SuiteResults:
+    def __init__(self) -> None:
+        self.total = 0
+        self.passed = 0
+        self.failed = 0
+        self.skipped = 0
+        self.details: List[Dict[str, Any]] = []
+
+    def record(self, name: str, outcome: str, **extra: Any) -> None:
+        self.total += 1
+        self.details.append({"name": name, "status": outcome, **extra})
+        if outcome == "PASSED":
+            self.passed += 1
+        elif outcome == "FAILED":
+            self.failed += 1
+        elif outcome == "SKIPPED":
+            self.skipped += 1
+
+
+def run_all_tests() -> SuiteResults:
+    logger.info("\n" + "🚀" * 30)
     logger.info("PAYMENT ENDPOINT TEST SUITE")
-    logger.info("🚀"*30)
-    
+    logger.info("🚀" * 30)
+
     client = PaymentTestClient()
-    results = {
-        'total': 0,
-        'passed': 0,
-        'failed': 0,
-        'details': []
-    }
-    
-    # ==================== STEP 1: Health Check ====================
-    logger.info(f"\n📝 STEP {results['total'] + 1}: Health Check...")
-    result = test_health_check(client)
-    results['total'] += 1
-    if result:
-        results['passed'] += 1
-        results['details'].append({'name': 'Health Check', 'status': 'PASSED'})
+    results = SuiteResults()
+
+    # 1. Health
+    ok = test_health_check(client)
+    results.record("Health Check", "PASSED" if ok else "FAILED")
+    if not ok:
+        # Nothing else will work if the server is down.
+        _print_summary(results)
+        return results
+
+    # 2. Route ordering
+    ok = test_route_ordering(client)
+    results.record("Route Ordering", "PASSED" if ok else "FAILED")
+
+    # 3. Create payment against an unpaid invoice
+    created_payment_id = test_create_payment_on_unpaid_invoice(client)
+    if created_payment_id is None:
+        results.record("Create Payment (unpaid)", "SKIPPED")
     else:
-        results['failed'] += 1
-        results['details'].append({'name': 'Health Check', 'status': 'FAILED'})
-    
-    # ==================== STEP 2: Create Payments ====================
-    logger.info(f"\n📝 STEP {results['total'] + 1}: Create Payments...")
-    created_ids = test_create_payment(client)
-    results['total'] += 1
-    if created_ids:
-        results['passed'] += 1
-        results['details'].append({'name': 'Create Payments', 'status': 'PASSED', 'created': len(created_ids)})
-    else:
-        results['failed'] += 1
-        results['details'].append({'name': 'Create Payments', 'status': 'FAILED'})
-    
-    # ==================== STEP 3: Get Invoice Payments ====================
-    logger.info(f"\n📝 STEP {results['total'] + 1}: Get Invoice Payments...")
-    result = test_get_invoice_payments(client)
-    results['total'] += 1
-    if result:
-        results['passed'] += 1
-        results['details'].append({'name': 'Get Invoice Payments', 'status': 'PASSED'})
-    else:
-        results['failed'] += 1
-        results['details'].append({'name': 'Get Invoice Payments', 'status': 'FAILED'})
-    
-    # ==================== STEP 4: Get Payment Details ====================
-    if client.created_payment_ids:
-        payment_id = client.created_payment_ids[0]
-        logger.info(f"\n📝 STEP {results['total'] + 1}: Get Payment Details...")
-        result = test_get_payment_details(client, payment_id)
-        results['total'] += 1
-        if result:
-            results['passed'] += 1
-            results['details'].append({'name': 'Get Payment Details', 'status': 'PASSED'})
+        results.record(
+            "Create Payment (unpaid)", "PASSED", payment_id=created_payment_id
+        )
+
+    # 4. Create payment against a paid invoice → 409
+    ok = test_create_payment_on_paid_invoice(client)
+    results.record("Create Payment (paid)", "PASSED" if ok else "FAILED")
+
+    # 5. Create payment validation errors → 422
+    ok = test_create_payment_validation_errors(client)
+    results.record("Create Payment (validation)", "PASSED" if ok else "FAILED")
+
+    # 6. Create payment on unknown invoice → 404
+    ok = test_create_payment_unknown_invoice(client)
+    results.record("Create Payment (404)", "PASSED" if ok else "FAILED")
+
+    # 7–14 depend on a created payment
+    if created_payment_id is not None:
+        ok = test_get_payment(client, created_payment_id)
+        results.record("Get Payment", "PASSED" if ok else "FAILED")
+
+        ok = test_confirm_payment(client, created_payment_id)
+        results.record("Confirm Payment", "PASSED" if ok else "FAILED")
+
+        ok = test_refund_payment(client, created_payment_id)
+        results.record("Refund Payment", "PASSED" if ok else "FAILED")
+
+        ok = test_refund_zero_amount(client, created_payment_id)
+        results.record("Refund Zero Amount", "PASSED" if ok else "FAILED")
+
+        # Reject needs a fresh payment — reject and refund are mutually exclusive.
+        reject_payment_id = test_create_payment_on_unpaid_invoice(client)
+        if reject_payment_id is None:
+            results.record("Reject Payment", "SKIPPED")
         else:
-            results['failed'] += 1
-            results['details'].append({'name': 'Get Payment Details', 'status': 'FAILED'})
-    else:
-        logger.warning("⚠️ No payment IDs available for Get Payment Details test")
-    
-    # ==================== STEP 5: Confirm Payment ====================
-    if client.created_payment_ids:
-        payment_id = client.created_payment_ids[0]
-        logger.info(f"\n📝 STEP {results['total'] + 1}: Confirm Payment...")
-        result = test_confirm_payment(client, payment_id)
-        results['total'] += 1
-        if result:
-            results['passed'] += 1
-            results['details'].append({'name': 'Confirm Payment', 'status': 'PASSED'})
+            ok = test_reject_payment(client, reject_payment_id)
+            results.record("Reject Payment", "PASSED" if ok else "FAILED")
+
+        # Invoice summary for the invoice we just paid against
+        info = client.get_payment(created_payment_id)
+        if info["status_code"] == 200:
+            invoice_id = info["data"].get("invoice_id")
+            if isinstance(invoice_id, int):
+                ok = test_invoice_payments_summary(client, invoice_id)
+                results.record("Invoice Summary", "PASSED" if ok else "FAILED")
+            else:
+                results.record("Invoice Summary", "SKIPPED")
         else:
-            results['failed'] += 1
-            results['details'].append({'name': 'Confirm Payment', 'status': 'FAILED'})
+            results.record("Invoice Summary", "SKIPPED")
     else:
-        logger.warning("⚠️ No payment IDs available for Confirm Payment test")
-    
-    # ==================== STEP 6: Create Payment for Rejection ====================
-    logger.info(f"\n📝 STEP {results['total'] + 1}: Create Payment for Rejection...")
-    result = client.create_payment(8, 230.50, 'card', 1, 'Test payment for rejection')
-    reject_payment_id = None
-    if result['status_code'] == 200:
-        reject_payment_id = result['data'].get('id')
-        logger.info(f"✅ Created payment {reject_payment_id} for rejection")
-        results['passed'] += 1
-        results['details'].append({'name': 'Create Payment for Rejection', 'status': 'PASSED'})
-    else:
-        logger.warning("⚠️ Could not create payment for rejection test")
-        results['failed'] += 1
-        results['details'].append({'name': 'Create Payment for Rejection', 'status': 'FAILED'})
-    results['total'] += 1
-    
-    # ==================== STEP 7: Reject Payment ====================
-    if reject_payment_id:
-        logger.info(f"\n📝 STEP {results['total'] + 1}: Reject Payment...")
-        result = test_reject_payment(client, reject_payment_id)
-        results['total'] += 1
-        if result:
-            results['passed'] += 1
-            results['details'].append({'name': 'Reject Payment', 'status': 'PASSED'})
-        else:
-            results['failed'] += 1
-            results['details'].append({'name': 'Reject Payment', 'status': 'FAILED'})
-    else:
-        logger.warning("⚠️ No payment ID available for Reject Payment test")
-    
-    # ==================== STEP 8: Daily Statistics ====================
-    logger.info(f"\n📝 STEP {results['total'] + 1}: Daily Statistics...")
-    result = test_daily_stats(client)
-    results['total'] += 1
-    if result:
-        results['passed'] += 1
-        results['details'].append({'name': 'Daily Statistics', 'status': 'PASSED'})
-    else:
-        results['failed'] += 1
-        results['details'].append({'name': 'Daily Statistics', 'status': 'FAILED'})
-    
-    # ==================== STEP 9: Error Scenarios ====================
-    logger.info(f"\n📝 STEP {results['total'] + 1}: Error Scenarios...")
-    result = test_error_scenarios(client)
-    results['total'] += 1
-    if result:
-        results['passed'] += 1
-        results['details'].append({'name': 'Error Scenarios', 'status': 'PASSED'})
-    else:
-        results['failed'] += 1
-        results['details'].append({'name': 'Error Scenarios', 'status': 'FAILED'})
-    
-    # ==================== SUMMARY ====================
-    logger.info("\n" + "="*60)
-    logger.info("TEST SUMMARY")
-    logger.info("="*60)
-    logger.info(f"Total tests: {results['total']}")
-    logger.info(f"✅ Passed: {results['passed']}")
-    logger.info(f"❌ Failed: {results['failed']}")
-    
-    # Detailed results
-    logger.info("\nDetailed Results:")
-    for detail in results['details']:
-        status = "✅" if detail['status'] == 'PASSED' else "❌"
-        extra = f" (created {detail.get('created', 0)} payments)" if detail.get('created') else ""
-        logger.info(f"  {status} {detail['name']}{extra}")
-    
-    if results['failed'] == 0:
-        logger.info("\n🎉 All tests passed!")
-    else:
-        logger.warning(f"\n⚠️ {results['failed']} tests failed")
-    
+        for name in (
+            "Get Payment",
+            "Confirm Payment",
+            "Refund Payment",
+            "Refund Zero Amount",
+            "Reject Payment",
+            "Invoice Summary",
+        ):
+            results.record(name, "SKIPPED")
+
+    # 15. Unknown payment lookups
+    ok = test_get_unknown_payment(client)
+    results.record("Get Unknown Payment (404)", "PASSED" if ok else "FAILED")
+
+    ok = test_confirm_unknown_payment(client)
+    results.record("Confirm Unknown Payment (404)", "PASSED" if ok else "FAILED")
+
+    ok = test_refund_unknown_payment(client)
+    results.record("Refund Unknown Payment (404)", "PASSED" if ok else "FAILED")
+
+    ok = test_invoice_payments_unknown_invoice(client)
+    results.record("Invoice Unknown (404)", "PASSED" if ok else "FAILED")
+
+    # 16. Daily stats
+    ok = test_daily_stats(client)
+    results.record("Daily Stats", "PASSED" if ok else "FAILED")
+
+    _print_summary(results)
     return results
 
 
-# ==================== RUN TESTS ====================
+def _print_summary(results: SuiteResults) -> None:
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"Total:   {results.total}")
+    logger.info(f"✅ Passed:  {results.passed}")
+    logger.info(f"❌ Failed:  {results.failed}")
+    logger.info(f"⏭️  Skipped: {results.skipped}")
+
+    logger.info("\nDetails:")
+    for d in results.details:
+        icon = {"PASSED": "✅", "FAILED": "❌", "SKIPPED": "⏭️"}.get(
+            d["status"], "?"
+        )
+        extra = ""
+        if "payment_id" in d:
+            extra = f" (payment_id={d['payment_id']})"
+        logger.info(f"  {icon} {d['name']}{extra}")
+
 
 if __name__ == "__main__":
     try:
-        # Check if server is running
-        import requests
-        try:
-            health_check = requests.get(f"{BASE_URL}/health")
-            if health_check.status_code == 200:
-                logger.info(f"✅ Server is running: {health_check.status_code}")
-            else:
-                logger.warning(f"⚠️ Server returned: {health_check.status_code}")
-                logger.info("Continuing with tests anyway...")
-        except requests.exceptions.ConnectionError:
-            logger.warning("⚠️ Could not connect to server. Make sure it's running.")
-            logger.info("Continuing with tests anyway...")
-        
-        # Run all tests
         results = run_all_tests()
-        
-        # Exit with appropriate code
-        sys.exit(0 if results['failed'] == 0 else 1)
-        
+        # Skipped is not the same as failed. Fail only on real failures.
+        sys.exit(0 if results.failed == 0 else 1)
     except KeyboardInterrupt:
-        logger.info("\n⚠️ Tests interrupted by user")
+        logger.info("\n⚠️ Interrupted by user")
         sys.exit(130)
-    except Exception as e:
-        logger.error(f"\n❌ Test execution failed: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)

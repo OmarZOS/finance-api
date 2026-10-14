@@ -27,7 +27,7 @@ services:
       - SQL_DATABASE=${SQL_DATABASE}
       - SQL_PORT=${SQL_PORT}
     # networks:
-    #   - gluttex-net
+    #   - verdelia-net
     volumes:
       - ./:/code
     deploy:
@@ -43,7 +43,7 @@ volumes:
 
 
 # networks:
-#   gluttex-net:
+#   verdelia-net:
 #     external: true
-#     name: gluttex-net
+#     name: verdelia-net
 #     driver: bridge
