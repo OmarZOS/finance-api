@@ -466,7 +466,7 @@ class PaymentService:
             return None
 
         if invoice.cart:
-            user_id = invoice.cart[0].cart_client_user
+            user_id = invoice.cart[0].client_user_id
             if user_id:
                 return user_id
 

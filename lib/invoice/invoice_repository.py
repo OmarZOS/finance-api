@@ -53,7 +53,7 @@ class InvoiceRepository:
         try:
             query = self.session.query(Invoice).join(
                 Cart, Invoice.cart
-            ).filter(Cart.cart_client_user == user_id)
+            ).filter(Cart.client_user_id == user_id)
             
             if status:
                 query = query.filter(Invoice.invoice_status == status)
